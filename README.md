@@ -82,6 +82,20 @@ No git? Download the repo as a zip from GitHub, unzip it into `custom_nodes/` (t
 
 Restart ComfyUI. Right-click the canvas → **Add Node** → **ReShot** → the two nodes are there. Or double-click the canvas and type `reshot`.
 
+### Or let your AI coding tool do it
+
+Paste this into Claude Code, Codex, Cursor or any AI agent that can run commands on your machine:
+
+```
+Install the ComfyUI-ReShot custom node pack into my ComfyUI and verify it loads.
+Find my ComfyUI folder (ask me if you can't), then follow https://raw.githubusercontent.com/maosika-ai/ComfyUI-ReShot/main/README.md:
+git clone https://github.com/maosika-ai/ComfyUI-ReShot into custom_nodes, then run
+`pip install -r ComfyUI-ReShot/requirements.txt` with the SAME python ComfyUI uses
+(python_embeded\python.exe on Windows portable). If I'm in China, add HF_ENDPOINT=https://hf-mirror.com
+to the launcher. Restart ComfyUI and confirm the console shows custom_nodes/ComfyUI-ReShot imported
+without error and /object_info lists ReShotDepthVideo. Don't say it's done before that.
+```
+
 ## First run
 
 The first time a ReShot node executes it downloads the model weights (`video_depth_anything_vits.pth`, 111 MB) from Hugging Face into `~/.cache/huggingface/hub/models--depth-anything--Video-Depth-Anything-Small/` (Windows: `C:\Users\<you>\.cache\huggingface\hub\…`). This happens once. The console shows the download progress, then:

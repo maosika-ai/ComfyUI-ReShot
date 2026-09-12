@@ -82,6 +82,19 @@ python_embeded\python.exe -m pip install -r ComfyUI\custom_nodes\ComfyUI-ReShot\
 
 重启 ComfyUI。画布右键 → **Add Node** → **ReShot**，两个节点都在；或者双击画布输入 `reshot`。
 
+### 或者让你的 AI 编程工具来装
+
+把下面这段粘给 Claude Code、Codex、Cursor 或任何能在你电脑上执行命令的 AI 工具：
+
+```
+把 ComfyUI-ReShot 节点包装进我的 ComfyUI 并确认能加载。
+先找到我的 ComfyUI 目录（找不到就问我），然后按 https://raw.githubusercontent.com/maosika-ai/ComfyUI-ReShot/main/README.zh-CN.md 做：
+把 https://github.com/maosika-ai/ComfyUI-ReShot 克隆到 custom_nodes，用 ComfyUI 自己那个 python
+（Windows 便携版是 python_embeded\python.exe）执行 pip install -r ComfyUI-ReShot/requirements.txt；
+我在中国大陆，把 HF_ENDPOINT=https://hf-mirror.com 加进启动脚本。重启 ComfyUI，确认控制台里
+custom_nodes/ComfyUI-ReShot 导入无报错、/object_info 里有 ReShotDepthVideo。没确认之前不要说完成。
+```
+
 ## 第一次运行
 
 ReShot 节点第一次执行时会从 Hugging Face 下载模型权重（`video_depth_anything_vits.pth`，111 MB）到 `~/.cache/huggingface/hub/models--depth-anything--Video-Depth-Anything-Small/`（Windows 在 `C:\Users\<你>\.cache\huggingface\hub\…`）。只下一次。控制台会显示下载进度，然后：
