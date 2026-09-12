@@ -1,0 +1,7 @@
+{
+  "1": {"class_type": "LoadVideo", "_meta": {"title": "Load Video (reference clip)"}, "inputs": {"file": "reference.mp4"}},
+  "2": {"class_type": "GetVideoComponents", "_meta": {"title": "Get Video Components"}, "inputs": {"video": ["1", 0]}},
+  "3": {"class_type": "ReShotDepthMap", "_meta": {"title": "ReShot Depth Map"}, "inputs": {"images": ["2", 0], "quality": "fast", "fit_to": "h3"}},
+  "4": {"class_type": "CreateVideo", "_meta": {"title": "Create Video"}, "inputs": {"images": ["3", 0], "fps": 24.0}},
+  "5": {"class_type": "SaveVideo", "_meta": {"title": "Save Video (depth map)"}, "inputs": {"video": ["4", 0], "filename_prefix": "reshot/depth", "format": "auto"}}
+}

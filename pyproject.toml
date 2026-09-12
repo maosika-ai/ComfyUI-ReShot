@@ -1,0 +1,15 @@
+[project]
+name = "comfyui-reshot"
+description = "ReShot depth maps as ComfyUI nodes: copy a reference shot's choreography and camera into Seedance, MiniMax H3 or Wan — not the actors."
+version = "0.1.0"
+license = { text = "Apache-2.0" }
+dependencies = ["reshot @ git+https://github.com/maosika-ai/reshot"]
+
+[project.urls]
+Repository = "https://github.com/maosika-ai/ComfyUI-ReShot"
+Maosika = "https://www.maosika.com"
+
+[tool.comfy]
+PublisherId = "maosika"
+DisplayName = "ComfyUI-ReShot"
+Icon = ""
