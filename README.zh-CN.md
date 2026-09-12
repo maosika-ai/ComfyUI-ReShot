@@ -300,7 +300,7 @@ Load Video ─▶ ReShot Depth Video (target: wan) ─depth_frames─▶ WanVace
 
 ## 更新与卸载
 
-ComfyUI Manager → 对 ComfyUI-ReShot 点 **Update**；或到 `custom_nodes/ComfyUI-ReShot` 里 `git pull`，再执行一次 `pip install -r requirements.txt`（`reshot` 包指向主分支，重跑 pip 就拿到最新版）。重启 ComfyUI。
+ComfyUI Manager → 对 ComfyUI-ReShot 点 **Update**；或到 `custom_nodes/ComfyUI-ReShot` 里 `git pull`，再执行一次 `pip install -r requirements.txt`（顺带把 PyPI 上的 `reshot` 包升到最新）。重启 ComfyUI。
 
 卸载：删掉 `custom_nodes/ComfyUI-ReShot` 文件夹；需要的话 `pip uninstall reshot`，再删 Hugging Face 缓存里的权重文件夹。
 

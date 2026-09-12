@@ -300,7 +300,7 @@ Still stuck: open an issue with the console lines starting `ReShot:` and the Com
 
 ## Updating
 
-ComfyUI Manager → **Update** on ComfyUI-ReShot, or `git pull` in `custom_nodes/ComfyUI-ReShot` followed by the `pip install -r requirements.txt` line again (the `reshot` package is pinned to the main branch, so re-running pip picks up its latest version). Restart ComfyUI.
+ComfyUI Manager → **Update** on ComfyUI-ReShot, or `git pull` in `custom_nodes/ComfyUI-ReShot` followed by the `pip install -r requirements.txt` line again (that upgrades the `reshot` package from PyPI too). Restart ComfyUI.
 
 To remove: delete the `custom_nodes/ComfyUI-ReShot` folder; optionally `pip uninstall reshot` and delete the weights folder from the Hugging Face cache.
 
