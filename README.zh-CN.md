@@ -41,7 +41,7 @@ Load Video → **ReShot Depth Video** → 视频模型的参考视频输入（�
 
 ## 示例工作流
 
-`workflows/reshot_depth_video_api.json` 和 `workflows/reshot_depth_map_api.json`——拖到 ComfyUI 画布上，在 Load Video 里选你的片子，点运行。
+`workflows/reshot_depth_video.json`（Load Video → ReShot Depth Video → Save Video）和 `workflows/reshot_depth_map.json`（按帧走的那条）——拖到 ComfyUI 画布上，在 Load Video 里选你的片子，点运行。同名 `*_api.json` 是 API 格式，给脚本用。
 
 ## 它是怎么做的
 

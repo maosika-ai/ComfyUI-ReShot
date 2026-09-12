@@ -41,7 +41,7 @@ For graphs that already work in frames: any loader → **ReShot Depth Map** → 
 
 ## Example workflows
 
-`workflows/reshot_depth_video_api.json` and `workflows/reshot_depth_map_api.json` — drop one onto the ComfyUI canvas, pick your clip in Load Video, queue.
+`workflows/reshot_depth_video.json` (Load Video → ReShot Depth Video → Save Video) and `workflows/reshot_depth_map.json` (frames path) — drop one onto the ComfyUI canvas, pick your clip in Load Video, queue. The `*_api.json` twins are the same graphs in API format for scripts.
 
 ## How it behaves
 
