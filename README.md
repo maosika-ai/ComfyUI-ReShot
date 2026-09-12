@@ -6,6 +6,8 @@ Two nodes that turn a reference video into a depth-map video (near = white, far 
 
 [中文说明](README.zh-CN.md)
 
+> Not a ComfyUI user? `pip install reshot` then type `reshot` — the same thing as a web page in your browser, no nodes needed. See [ReShot](https://github.com/maosika-ai/reshot).
+
 1. [What it does](#what-it-does)
 2. [Requirements](#requirements)
 3. [Install](#install)

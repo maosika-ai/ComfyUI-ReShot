@@ -6,6 +6,8 @@
 
 [English](README.md)
 
+> 不用 ComfyUI？`pip install reshot` 之后敲 `reshot`，浏览器里就有同样功能的网页，不用连节点。见 [ReShot](https://github.com/maosika-ai/reshot)。
+
 1. [它做什么](#它做什么)
 2. [需要什么](#需要什么)
 3. [安装](#安装)
