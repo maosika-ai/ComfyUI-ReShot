@@ -2,7 +2,7 @@
 
 **复制走位，不复制演员——在 ComfyUI 里。**
 
-两个节点，把参考视频变成深度图视频（近白远黑），让视频模型照着它的动作和运镜再拍一遍——人物、衣服、画风都换成你的。基于 [ReShot](https://github.com/maosika-ai/reshot)（Apache-2.0），由 [猫斯卡](https://www.maosika.com) 开源。
+把参考视频变成深度图（近白远黑）、OpenPose 骨架或线稿视频的节点，让视频模型照着它的动作和运镜再拍一遍——人物、衣服、画风都换成你的。基于 [ReShot](https://github.com/maosika-ai/reshot)（Apache-2.0），由 [猫斯卡](https://www.maosika.com) 开源。
 
 [English](README.md)
 
@@ -29,12 +29,16 @@
 
 ReShot 只留下你要的那部分。它用视频深度模型把片子扫一遍，写出一段灰片：近处白、远处黑、每一帧和上一帧严丝合缝。谁站在哪、谁大谁小、怎么动、镜头怎么走都保留；脸、服装、光线、画风全部去掉。把灰片当参考视频交给模型，提示词里写人物和画风。
 
-这个包把它做成了 ComfyUI 的两个节点：
+这个包把它做成了 ComfyUI 的三对节点——每种控制图一对：
 
 | 节点 | 进 → 出 | 什么时候用 |
 |---|---|---|
 | **ReShot Depth Video** | `VIDEO → VIDEO`（另给帧序列和 fps） | 你有 Load Video 节点，下游模型收参考**视频**——Seedance 2.5 Reference to Video、MiniMax H3 Reference to Video——或者你只想 Save Video 存成文件拿去别处上传。它会替你按那家模型的 fps 和尺寸规则处理。 |
 | **ReShot Depth Map** | `IMAGE → IMAGE` | 你的工作流本来就按帧走——深度 ControlNet（MiniMax H3 Fun ControlNet、Wan VACE 的 `control_video`、SD ControlNet-depth）都收 IMAGE 批。 |
+| **ReShot Pose Video** / **Pose Map** | `VIDEO → VIDEO` / `IMAGE → IMAGE`（另给骨架 JSON） | 跳舞、武打，凡是靠肢体的。OpenPose 画法的骨架（DWPose：身体 + 手，不画脸），跨帧跟踪并平滑。接 H3 Fun ControlNet 的 **pose** 口，或任何 pose ControlNet。 |
+| **ReShot Canny Video** / **Canny Map** | `VIDEO → VIDEO` / `IMAGE → IMAGE` | 黑底白线的边缘图，不用模型。会把服装和脸的轮廓也带过去——想去掉这些选深度或骨架。 |
+
+**深度图还是骨架？** 深度图带走整个画面，人和非人都管用；骨架只带人，每根肢体都准，体型和场景一点不带。拿不准就两个都出，看模型跟哪个跟得好。
 
 严格地说：单目视频深度估计，模型是 Video Depth Anything Small（字节跳动，CVPR 2025，Apache-2.0）。它以 32 帧为窗口重叠推理、逐帧预测相对逆深度并对齐；ReShot 对整段做一次归一化变成 8 位灰度。产出是深度图，不是 3D 模型。
 
@@ -46,7 +50,8 @@ ReShot 只留下你要的那部分。它用视频深度模型把片子扫一遍�
 | Python | 3.10 – 3.12 | 跟你 ComfyUI 用的一致 |
 | PyTorch | ≥ 2.1 | ComfyUI 能跑就有 |
 | 显卡 | N 卡 **8 GB**（`quality = fast`），**12 GB**（`full`） | 实测数字见[性能实测](#性能实测)。Apple 芯片和纯 CPU 也能跑，慢。 |
-| 磁盘 | 111 MB 模型权重 | 首次使用下载一次 |
+| 磁盘 | 深度权重 111 MB；骨架权重再加 340 MB | 首次使用下载一次 |
+| 骨架节点 | `onnxruntime`（`requirements.txt` 以 `reshot[pose]` 装上） | N 卡想让骨架模型也上 GPU，在同一个 Python 里 `pip install onnxruntime-gpu`；CPU 版哪都能跑（M2 Max 约 300 ms/帧） |
 | 内存 | 16 GB 能跑 720p 约 27 秒 | 峰值 ≈ 2 GB + 每秒 720p 约 224 MB |
 
 节点**不需要** ffmpeg——解码和编码走 ComfyUI 自己的视频节点。
@@ -82,7 +87,7 @@ python_embeded\python.exe -m pip install -r ComfyUI\custom_nodes\ComfyUI-ReShot\
 
 没装 git？在 GitHub 上下载仓库 zip，解压到 `custom_nodes/`（解压出来的文件夹里要直接有 `__init__.py`），再执行上面那行 `pip install`。
 
-重启 ComfyUI。画布右键 → **Add Node** → **ReShot**，两个节点都在；或者双击画布输入 `reshot`。
+重启 ComfyUI。画布右键 → **Add Node** → **ReShot**，六个节点都在；或者双击画布输入 `reshot`。
 
 ### 或者让你的 AI 编程工具来装
 
@@ -180,7 +185,24 @@ Load Video ──VIDEO──▶ ReShot Depth Video ──depth_video──▶ Sa
 
 **输出**：`depth`——IMAGE 批，帧数不变，尺寸（除非 `fit_to` 裁了）不变，灰度复制成三通道，任何收 IMAGE 的节点都能接。
 
-两个节点共用一个已加载的模型。深度对**你传进来的整批**做一次归一化——所以整段片一次传，别切块；切块各归一各的，接缝处灰度会跳。
+深度这两个节点共用一个已加载的模型。深度对**你传进来的整批**做一次归一化——所以整段片一次传，别切块；切块各归一各的，接缝处灰度会跳。
+
+### ReShot Pose Video / ReShot Pose Map
+
+和深度那对一样的形状：Video 节点收 `video` + `target`（+ `max_side`），出 `pose_video`、`pose_frames`、`fps`；Map 节点收 `images` + `fit_to`，出 `pose`。两个都另出一个 **`keypoints_json`**——STRING，装着全部骨架（`reshot-pose/1`：每帧每个人一个稳定 `id`、134 个 `[x, y]` 点和分数），可以接文本节点存下来或交给你自己的脚本。
+
+| 选项 | 默认 | 作用 |
+|---|---|---|
+| `hands` | 开 | 画 21 点的手——抓握和手势靠它。 |
+| `face` | 关 | 画 68 个脸点。默认关，因为脸型正是 ReShot 要扔掉的东西。 |
+| `smooth` | 开 | 跨帧跟踪每个人（IoU）、关节短暂掉到阈值以下时先扛住（迟滞）、每个关节过一个 One-Euro 滤波。关掉 = 估计器逐帧原始输出；那种抖动视频模型会当成动作读。 |
+| `detect_every` | 3 | 每 N 帧跑一次检人，中间帧用骨架推框；片子里有剪切或骨架不可信时立刻重检。1 = 每帧都检，CPU 上慢约 1.5 倍。289 帧演示片上 N=3 对 1 实测：280 帧人数一致，80% 关节误差在 2 px 以内。 |
+
+模型是 DWPose（YOLOX-L 检人 + RTMPose 全身，Apache-2.0），就是 `controlnet_aux` 出 pose 图用的那个估计器，所以骨架长得和 ControlNet 训练时看到的一样：18 个身体关节用 OpenPose 配色，肢体画成 60% 亮度的椭圆，手用彩虹色连线。线宽随画幅缩放。整段片一个人都没找到会出全黑视频并在控制台警告。
+
+### ReShot Canny Video / ReShot Canny Map
+
+`low` / `high`（默认 100 / 200）是 OpenCV Canny 的迟滞阈值（先过 3×3 高斯）：`low` 调低线更多，`high` 调高只留强边。输出和深度节点一样是灰度复制成三通道。
 
 ## 接法示例
 
@@ -232,15 +254,17 @@ is transferred onto <Subject 1> and <Subject 2>; its grey depth look is not tran
 
 两个要点：**用文字把灰片里发生的事写一遍**（有了叙述模型读深度图准得多）；**明说灰色外观不要抄**，不然可能给你一部灰片。做出 ReShot 演示片的三条完整提示词在主仓库 [`docs/prompts/`](https://github.com/maosika-ai/reshot/tree/main/docs/prompts)。
 
-### D. MiniMax H3 Fun ControlNet（深度条件）
+### D. MiniMax H3 Fun ControlNet（depth / pose / canny 条件）
 
-**Apply MiniMax H3 Fun ControlNet** 的 `control_video` 收 IMAGE 批。走按帧的路：
+**Apply MiniMax H3 Fun ControlNet** 的 `control_video` 收 IMAGE 批。走按帧的路，ControlNet 上选哪个条件就接哪个 ReShot 节点：
 
 ```
-Load Video ─▶ Get Video Components ─images─▶ ReShot Depth Map (fit_to: h3) ─depth─▶ Apply MiniMax H3 Fun ControlNet: control_video
+Load Video ─▶ Get Video Components ─images─▶ ReShot Depth Map (fit_to: h3) ─depth─▶ Apply MiniMax H3 Fun ControlNet: control_video   （条件 depth）
+Load Video ─▶ Get Video Components ─images─▶ ReShot Pose Map  (fit_to: h3) ─pose──▶ Apply MiniMax H3 Fun ControlNet: control_video   （条件 pose）
+Load Video ─▶ Get Video Components ─images─▶ ReShot Canny Map (fit_to: h3) ─canny─▶ Apply MiniMax H3 Fun ControlNet: control_video   （条件 canny）
 ```
 
-Fun ControlNet Union 权重和深度条件说明见 `https://huggingface.co/alibaba-pai/MiniMax-H3-Fun-Controlnet-Union`。`strength` 接近 1.0 就紧跟走位，调低让模型自由发挥。
+Fun ControlNet Union 权重和各条件说明见 `https://huggingface.co/alibaba-pai/MiniMax-H3-Fun-Controlnet-Union`。`strength` 接近 1.0 就紧跟走位，调低让模型自由发挥。跳舞和打戏 pose 拴得更紧；depth 还会带上场景和镜头。
 
 ### E. Wan 2.1 VACE
 

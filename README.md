@@ -2,7 +2,7 @@
 
 **Copy the shot, not the actors — inside ComfyUI.**
 
-Two nodes that turn a reference video into a depth-map video (near = white, far = black), so a video model can repeat the reference's choreography and camera moves with your own characters, clothes and style. Built on [ReShot](https://github.com/maosika-ai/reshot) (Apache-2.0), open-sourced by [Maosika 猫斯卡](https://www.maosika.com).
+Nodes that turn a reference video into a depth-map video (near = white, far = black), an OpenPose-style skeleton video or a canny line video, so a video model can repeat the reference's choreography and camera moves with your own characters, clothes and style. Built on [ReShot](https://github.com/maosika-ai/reshot) (Apache-2.0), open-sourced by [Maosika 猫斯卡](https://www.maosika.com).
 
 [中文说明](README.zh-CN.md)
 
@@ -29,12 +29,16 @@ You have a clip whose fight, dance or camera move is exactly what you want. Feed
 
 ReShot keeps only the part you wanted. It runs a video depth model over the clip and writes a grey video: near things white, far things black, every frame consistent with the last. Where people stand, how big they are, how they move and how the camera moves survive; faces, wardrobe, lighting and style are gone. Give that grey video to your model as the reference and describe the people and the look in the prompt.
 
-This pack puts that into ComfyUI as two nodes:
+This pack puts that into ComfyUI as three pairs of nodes — one pair per control type:
 
 | node | in → out | use it when |
 |---|---|---|
 | **ReShot Depth Video** | `VIDEO → VIDEO` (+ frames, fps) | You have a Load Video node and a model that takes a reference **video** — Seedance 2.5 Reference to Video, MiniMax H3 Reference to Video — or you just want to Save Video and upload the file somewhere. Applies the model's fps and frame-size rules for you. |
 | **ReShot Depth Map** | `IMAGE → IMAGE` | Your graph already works in frames — depth ControlNets (MiniMax H3 Fun ControlNet, Wan VACE `control_video`, SD ControlNet-depth) take IMAGE batches. |
+| **ReShot Pose Video** / **Pose Map** | `VIDEO → VIDEO` / `IMAGE → IMAGE` (+ keypoints JSON) | Dance, martial arts, anything where the limbs are the point. OpenPose-style skeletons (DWPose: body + hands, no face), tracked and smoothed across frames. Goes into the **pose** input of the H3 Fun ControlNet, or any pose ControlNet. |
+| **ReShot Canny Video** / **Canny Map** | `VIDEO → VIDEO` / `IMAGE → IMAGE` | White edge lines on black; no model. Carries the outline of clothes and faces too — pick depth or pose if you want those gone. |
+
+**Depth or pose?** Depth carries the whole picture and works on anything; pose carries only the people, every limb exactly, nothing of their shape or the set. Make both when unsure and see which the model follows better.
 
 Technically: monocular video depth estimation with Video Depth Anything Small (ByteDance, CVPR 2025, Apache-2.0). The model predicts relative inverse depth per frame on overlapping 32-frame windows and aligns them; ReShot normalises the result once over the whole clip to 8-bit grey. The output is a depth map, not 3D geometry.
 
@@ -46,7 +50,8 @@ Technically: monocular video depth estimation with Video Depth Anything Small (B
 | Python | 3.10 – 3.12 | whatever your ComfyUI runs on |
 | PyTorch | ≥ 2.1 | already there if ComfyUI runs |
 | GPU | NVIDIA **8 GB** for `quality = fast`, **12 GB** for `full` | measured, see [Performance](#performance). Apple Silicon and CPU work, slower. |
-| Disk | 111 MB for the model weights | downloaded once on first use |
+| Disk | 111 MB for the depth weights; 340 MB more for the pose weights | downloaded once on first use |
+| Pose nodes | `onnxruntime` (installed by `requirements.txt` as `reshot[pose]`) | `pip install onnxruntime-gpu` in the same Python to run the pose models on an NVIDIA card; the CPU build works everywhere (≈300 ms/frame on an M2 Max) |
 | Host RAM | 16 GB covers clips up to ~27 s at 720p | peak ≈ 2 GB + 224 MB per second of 720p |
 
 ffmpeg is **not** required by the nodes — ComfyUI's own video nodes decode and encode.
@@ -57,7 +62,7 @@ ffmpeg is **not** required by the nodes — ComfyUI's own video nodes decode and
 
 1. Open ComfyUI → **Manager** → **Custom Nodes Manager** → **Install via Git URL** (top right).
 2. Paste `https://github.com/maosika-ai/ComfyUI-ReShot` → **OK**.
-3. Manager clones the repo and runs `pip install -r requirements.txt`, which installs the `reshot` package (and `huggingface_hub`, `opencv-python-headless`, `einops`, `easydict` if missing).
+3. Manager clones the repo and runs `pip install -r requirements.txt`, which installs the `reshot[pose]` package (and `huggingface_hub`, `opencv-python-headless`, `einops`, `easydict`, `onnxruntime` if missing).
 4. **Restart ComfyUI** when Manager asks. On the next start you'll see `custom_nodes/ComfyUI-ReShot` in the import list with a time and no error.
 
 ### Manually
@@ -82,7 +87,7 @@ python_embeded\python.exe -m pip install -r ComfyUI\custom_nodes\ComfyUI-ReShot\
 
 No git? Download the repo as a zip from GitHub, unzip it into `custom_nodes/` (the folder must contain `__init__.py` directly), then run the `pip install` line.
 
-Restart ComfyUI. Right-click the canvas → **Add Node** → **ReShot** → the two nodes are there. Or double-click the canvas and type `reshot`.
+Restart ComfyUI. Right-click the canvas → **Add Node** → **ReShot** → the six nodes are there. Or double-click the canvas and type `reshot`.
 
 ### Or let your AI coding tool do it
 
@@ -131,7 +136,7 @@ Load Video ──VIDEO──▶ ReShot Depth Video ──depth_video──▶ Sa
 3. **Queue**. The console prints the frame count and the resolution the model works at; the depth video lands in `ComfyUI/output/reshot/`.
 4. Open it: grey, near-white-far-black, same length and framing as your clip. That file is what you hand to the video model.
 
-The second example, `workflows/reshot_depth_map.json`, is the frames path: Load Video → Get Video Components → **ReShot Depth Map** → Create Video → Save Video. Use it as the template when the consumer is a ControlNet.
+The second example, `workflows/reshot_depth_map.json`, is the frames path: Load Video → Get Video Components → **ReShot Depth Map** → Create Video → Save Video. Use it as the template when the consumer is a ControlNet. `workflows/reshot_pose_video.json` is the same three nodes with **ReShot Pose Video** in the middle (target `h3`).
 
 `*_api.json` next to them are the same graphs in API format, for scripts that POST to `/prompt`.
 
@@ -181,7 +186,24 @@ Warnings you may see in the console: `clip is 18.0s; seedance accepts <= 15s` �
 
 **Output**: `depth` — IMAGE batch, same count and (unless `fit_to` cropped it) same size as the input, grey replicated to three channels so any node that takes IMAGE accepts it.
 
-Both nodes share one loaded model per ComfyUI process. Depth is normalised over the **whole batch you pass** — so pass the whole clip at once, not chunks; chunks would each get their own scale and the grey would jump at the seams.
+The two depth nodes share one loaded model per ComfyUI process. Depth is normalised over the **whole batch you pass** — so pass the whole clip at once, not chunks; chunks would each get their own scale and the grey would jump at the seams.
+
+### ReShot Pose Video / ReShot Pose Map
+
+Same shape as the depth pair: the Video node takes `video` + `target` (+ `max_side`) and returns `pose_video`, `pose_frames`, `fps`; the Map node takes `images` + `fit_to` and returns `pose`. Both also return **`keypoints_json`** — a STRING with every skeleton (`reshot-pose/1`: per frame, per person, a stable `id`, 134 `[x, y]` points and scores), which you can save with a text node or feed to your own scripts.
+
+| option | default | what it does |
+|---|---|---|
+| `hands` | on | Draw the 21-point hands — grips and gestures. |
+| `face` | off | Draw the 68 face points. Off because the face shape is what ReShot throws away. |
+| `smooth` | on | Track people across frames (IoU), hold a joint that dips briefly below the draw threshold (hysteresis), One-Euro filter per joint. Off = raw per-frame estimator output; a video model reads the raw jitter as motion. |
+| `detect_every` | 3 | Run the person detector every N frames and follow the skeletons in between; a cut in the clip or an unreliable skeleton re-detects at once. 1 = every frame, ~1.5× slower on CPU. Measured on the 289-frame demo, N=3 vs 1: 280 frames with identical people, 80 % of joints within 2 px. |
+
+The model is DWPose (YOLOX-L detector + RTMPose whole-body, Apache-2.0), the estimator behind `controlnet_aux`'s pose images, so the skeletons look like what the ControlNets were trained on: 18 body joints in OpenPose colours, limbs as ellipses at 60 % brightness, hands as rainbow edges. Stroke widths scale with the frame. Nobody found in the whole clip → a black video and a console warning.
+
+### ReShot Canny Video / ReShot Canny Map
+
+`low` / `high` (default 100 / 200) are OpenCV's Canny hysteresis thresholds after a 3×3 Gaussian blur: lower `low` for more lines, higher `high` to keep only strong edges. Output is grey replicated to three channels, like the depth nodes.
 
 ## Recipes
 
@@ -233,15 +255,17 @@ is transferred onto <Subject 1> and <Subject 2>; its grey depth look is not tran
 
 Two things matter: **say in words what happens in the grey clip** (the model reads it far better with the narration), and **say the grey look is not to be copied**, or you may get a grey film back. Three complete prompts that produced the ReShot demo takes are in the main repo under [`docs/prompts/`](https://github.com/maosika-ai/reshot/tree/main/docs/prompts).
 
-### D. MiniMax H3 Fun ControlNet (depth condition)
+### D. MiniMax H3 Fun ControlNet (depth, pose or canny condition)
 
-**Apply MiniMax H3 Fun ControlNet** takes `control_video` as an IMAGE batch. Use the frames path:
+**Apply MiniMax H3 Fun ControlNet** takes `control_video` as an IMAGE batch. Use the frames path, with the ReShot node that matches the condition you select on the ControlNet:
 
 ```
-Load Video ─▶ Get Video Components ─images─▶ ReShot Depth Map (fit_to: h3) ─depth─▶ Apply MiniMax H3 Fun ControlNet: control_video
+Load Video ─▶ Get Video Components ─images─▶ ReShot Depth Map (fit_to: h3) ─depth─▶ Apply MiniMax H3 Fun ControlNet: control_video   (condition: depth)
+Load Video ─▶ Get Video Components ─images─▶ ReShot Pose Map  (fit_to: h3) ─pose──▶ Apply MiniMax H3 Fun ControlNet: control_video   (condition: pose)
+Load Video ─▶ Get Video Components ─images─▶ ReShot Canny Map (fit_to: h3) ─canny─▶ Apply MiniMax H3 Fun ControlNet: control_video   (condition: canny)
 ```
 
-The Fun ControlNet Union weights and the depth conditioning are described at `https://huggingface.co/alibaba-pai/MiniMax-H3-Fun-Controlnet-Union`. Keep `strength` near 1.0 to follow the blocking closely; lower it to let the model drift.
+The Fun ControlNet Union weights and the conditions are described at `https://huggingface.co/alibaba-pai/MiniMax-H3-Fun-Controlnet-Union`. Keep `strength` near 1.0 to follow the blocking closely; lower it to let the model drift. For a dance or a fight, pose is the tighter leash; depth also carries the set and the camera.
 
 ### E. Wan 2.1 VACE
 

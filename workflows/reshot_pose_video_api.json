@@ -1,0 +1,43 @@
+{
+  "1": {
+    "class_type": "LoadVideo",
+    "_meta": {
+      "title": "Load Video (reference clip)"
+    },
+    "inputs": {
+      "file": "reference.mp4"
+    }
+  },
+  "2": {
+    "class_type": "ReShotPoseVideo",
+    "_meta": {
+      "title": "ReShot Pose Video"
+    },
+    "inputs": {
+      "video": [
+        "1",
+        0
+      ],
+      "target": "h3",
+      "hands": true,
+      "face": false,
+      "smooth": true,
+      "detect_every": 3,
+      "max_side": 0
+    }
+  },
+  "3": {
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video (skeleton)"
+    },
+    "inputs": {
+      "video": [
+        "2",
+        0
+      ],
+      "filename_prefix": "reshot/pose",
+      "format": "auto"
+    }
+  }
+}

@@ -1,1 +1,1 @@
-reshot>=0.4.0
+reshot[pose]>=0.5.0

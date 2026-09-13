@@ -1,11 +1,19 @@
 """The nodes. Classic ComfyUI node API (INPUT_TYPES / RETURN_TYPES / FUNCTION) so the pack
-loads on every ComfyUI version; the VIDEO type is imported lazily so the IMAGE node still
-works on builds that predate it.
+loads on every ComfyUI version; the VIDEO type is imported lazily so the IMAGE nodes still
+work on builds that predate it.
 
-Why the model is cached at module level: ComfyUI re-executes a node whenever an input
-changes; reloading 111 MB of weights and rebuilding the CUDA context on every tweak of
-`gamma` would cost seconds each time. One backend per (model, device) is kept for the
-life of the process — it is 28M parameters, small next to any video model in the graph.
+Three control types, each as an IMAGE→IMAGE "Map" node and a VIDEO→VIDEO "Video" node
+that additionally applies a generator preset (fps by timestamp + frame-size crop):
+
+    Depth   Video Depth Anything → grey, near = white          (reshot >= 0.3)
+    Pose    DWPose → OpenPose-style coloured skeletons on black (reshot >= 0.5, needs onnxruntime)
+    Canny   OpenCV edges → white lines on black                 (reshot >= 0.5, no model)
+
+Why the models are cached at module level: ComfyUI re-executes a node whenever an input
+changes; reloading weights and rebuilding the CUDA context on every tweak of `gamma`
+would cost seconds each time. One backend per (kind, model, device) is kept for the life
+of the process — 28M parameters for depth, two ONNX files for pose, small next to any
+video model in the graph.
 """
 
 from __future__ import annotations
@@ -43,10 +51,21 @@ def _backend(model: str = "small"):
     if os.environ.get("RESHOT_FAKE_BACKEND"):  # same test escape hatch as the reshot CLI
         return get_backend("fake")
     device = _device()
-    key = (model, device)
+    key = ("vda", model, device)
     if key not in _BACKENDS:
         log.info("ReShot: loading Video Depth Anything %s on %s", model, device)
         _BACKENDS[key] = get_backend("vda", model=model, device=device)
+    return _BACKENDS[key]
+
+
+def _pose_backend(detect_every: int = 3):
+    if os.environ.get("RESHOT_FAKE_BACKEND"):
+        return get_backend("fake-pose")
+    device = _device()
+    key = ("dwpose", detect_every, device)
+    if key not in _BACKENDS:
+        log.info("ReShot: loading DWPose on %s", device)
+        _BACKENDS[key] = get_backend("dwpose", device=device, detect_every=detect_every)
     return _BACKENDS[key]
 
 
@@ -96,18 +115,64 @@ def depth_frames(
     return _resize_batch(gray, w, h, cv2.INTER_LINEAR)
 
 
+def pose_frames(
+    frames: np.ndarray,
+    *,
+    hands: bool = True,
+    face: bool = False,
+    smooth: bool = True,
+    detect_every: int = 3,
+) -> tuple[np.ndarray, str]:
+    """uint8 RGB `[T, H, W, 3]` → (uint8 RGB skeleton frames `[T, H, W, 3]`, keypoints JSON).
+
+    Same chain as the CLI's `--control pose`: DWPose per frame (detector every N frames,
+    skeleton-tracked boxes in between, cuts re-detect), then track → visibility
+    hysteresis → One-Euro smoothing, then the OpenPose render at the source size."""
+    import json
+
+    from reshot.pose.skeleton import render_frame
+    from reshot.pose.tracking import stabilise
+
+    t, h, w = frames.shape[:3]
+    clip = _pose_backend(detect_every).infer(frames, 24.0)
+    if smooth:
+        stabilise(clip)
+    people = [k.shape[0] for k in clip.keypoints]
+    log.info("ReShot: pose on %d frames, people per frame %d–%d", t, min(people), max(people))
+    out = np.empty((t, h, w, 3), dtype=np.uint8)
+    for i in range(t):
+        out[i] = render_frame(clip.keypoints[i], clip.scores[i], h, w, hands=hands, face=face)
+    return out, json.dumps(clip.to_json_dict(), separators=(",", ":"))
+
+
+def canny_frames(frames: np.ndarray, *, low: int = 100, high: int = 200) -> np.ndarray:
+    """uint8 RGB `[T, H, W, 3]` → uint8 edge frames `[T, H, W]` (white lines on black)."""
+    from reshot.edges import canny_frame
+
+    t, h, w = frames.shape[:3]
+    out = np.empty((t, h, w), dtype=np.uint8)
+    for i in range(t):
+        out[i] = canny_frame(frames[i], h, w, low=low, high=high)
+    return out
+
+
+def _rgb_to_image(rgb: np.ndarray) -> torch.Tensor:
+    """uint8 `[T, H, W, 3]` → ComfyUI IMAGE float 0–1."""
+    return torch.from_numpy(np.ascontiguousarray(rgb)).float().div_(255.0)
+
+
 def _gray_to_image(gray: np.ndarray) -> torch.Tensor:
     """uint8 `[T, H, W]` → ComfyUI IMAGE `[T, H, W, 3]` float 0–1 (grey replicated)."""
     g = torch.from_numpy(np.ascontiguousarray(gray)).float().div_(255.0)
     return g.unsqueeze(-1).expand(-1, -1, -1, 3).contiguous()
 
 
-def _crop_batch(gray: np.ndarray, multiple: int) -> np.ndarray:
-    h, w = gray.shape[1:3]
+def _crop_batch(arr: np.ndarray, multiple: int) -> np.ndarray:
+    h, w = arr.shape[1:3]
     nh, nw = fit_dimensions(h, w, multiple)
     if (nh, nw) == (h, w):
-        return gray
-    return np.ascontiguousarray(center_crop(gray, nh, nw))  # works on the whole [T, H, W] batch
+        return arr
+    return np.ascontiguousarray(center_crop(arr, nh, nw))  # works on the whole [T, H, W(, 3)] batch
 
 
 def _resample_by_timestamp(frames: np.ndarray, src_fps: float, target_fps: float) -> np.ndarray:
@@ -123,6 +188,38 @@ def _resample_by_timestamp(frames: np.ndarray, src_fps: float, target_fps: float
         keep.append(i)
     return frames[keep]
 
+
+def _video_in(video, target: str):
+    """VIDEO → (uint8 frames resampled to the preset fps, out_fps, preset)."""
+    comp = video.get_components()
+    src_fps = float(comp.frame_rate)
+    frames = _to_uint8_frames(comp.images)
+    preset = TARGETS[target]
+    out_fps = src_fps if not preset.fps or preset.fps >= src_fps else float(preset.fps)
+    frames = _resample_by_timestamp(frames, src_fps, out_fps)
+    if preset.max_seconds and frames.shape[0] / out_fps > preset.max_seconds + 1e-6:
+        log.warning("ReShot: clip is %.1fs; %s accepts <= %.0fs", frames.shape[0] / out_fps, target, preset.max_seconds)
+    return frames, out_fps, preset
+
+
+def _fit_out(arr: np.ndarray, preset, max_side: int) -> np.ndarray:
+    """Cap the longer side, then centre-crop to the preset's multiple. Works on [T, H, W] and [T, H, W, 3]."""
+    import cv2
+
+    if max_side and max(arr.shape[1:3]) > max_side:
+        sc = max_side / max(arr.shape[1:3])
+        arr = _resize_batch(arr, int(round(arr.shape[2] * sc / 2) * 2), int(round(arr.shape[1] * sc / 2) * 2), cv2.INTER_AREA)
+    return _crop_batch(arr, preset.multiple)
+
+
+_TARGET_TIP = "Preset: seedance = 24 fps, x16; h3 = 24 fps, x32; wan = 16 fps, x16; none = keep fps, even dims."
+_MAX_SIDE_TIP = "Cap the output's longer side (0 = source size). e.g. 320 for MiniMax H3 reference videos."
+_HANDS_TIP = "Draw the 21-point hands (grips and gestures)."
+_FACE_TIP = "Draw the 68 face points. Off by default: the face shape is what ReShot throws away."
+_SMOOTH_TIP = "Track people across frames, hold joints that dip briefly, One-Euro smooth. Off = raw per-frame output."
+_DETECT_TIP = "Run the person detector every N frames and follow the skeletons in between (cuts always re-detect). 1 = every frame, ~2.5x slower on CPU."
+_CANNY_LOW_TIP = "Canny low threshold: lower = more lines."
+_CANNY_HIGH_TIP = "Canny high threshold: higher = only strong edges."
 
 _QUALITY_TIP = "fast: model sees 644x364 (16:9), ~3 GB VRAM. full: 924x518, ~11 GB VRAM, 2.5x slower, sharper fine detail."
 _INVERT_TIP = "Off: near is white (what depth ControlNets and Seedance/H3 expect). On: far is white."
@@ -197,21 +294,136 @@ class ReShotDepthVideo:
     DESCRIPTION = "Reference video → depth-map video that meets the Seedance / MiniMax H3 / Wan reference-video rules. Copy the shot, not the actors."
 
     def run(self, video, target="seedance", quality="fast", invert=False, clip_percent=0.0, gamma=1.0, max_side=0):
-        import cv2
-
-        comp = video.get_components()
-        src_fps = float(comp.frame_rate)
-        frames = _to_uint8_frames(comp.images)
-        preset = TARGETS[target]
-        out_fps = src_fps if not preset.fps or preset.fps >= src_fps else float(preset.fps)
-        frames = _resample_by_timestamp(frames, src_fps, out_fps)
-        if preset.max_seconds and frames.shape[0] / out_fps > preset.max_seconds + 1e-6:
-            log.warning("ReShot: clip is %.1fs; %s accepts <= %.0fs", frames.shape[0] / out_fps, target, preset.max_seconds)
+        frames, out_fps, preset = _video_in(video, target)
         gray = depth_frames(frames, quality=quality, invert=invert, clip_percent=clip_percent, gamma=gamma)
-        if max_side and max(gray.shape[1:3]) > max_side:
-            s = max_side / max(gray.shape[1:3])
-            gray = _resize_batch(gray, int(round(gray.shape[2] * s / 2) * 2), int(round(gray.shape[1] * s / 2) * 2), cv2.INTER_AREA)
-        gray = _crop_batch(gray, preset.multiple)
+        gray = _fit_out(gray, preset, max_side)
+        images = _gray_to_image(gray)
+        return (_make_video(images, out_fps), images, out_fps)
+
+
+class ReShotPoseMap:
+    """IMAGE batch → OpenPose-style skeleton IMAGE batch (DWPose). Drop it before a pose ControlNet."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE", {"tooltip": "Video frames as an IMAGE batch [T, H, W, 3]."}),
+                "fit_to": (
+                    ["none", "h3", "seedance", "wan"],
+                    {"default": "none", "tooltip": "Center-crop to the model's frame-size multiple (h3: x32, seedance/wan: x16). fps is not changed here — use ReShot Pose Video for that."},
+                ),
+            },
+            "optional": {
+                "hands": ("BOOLEAN", {"default": True, "tooltip": _HANDS_TIP}),
+                "face": ("BOOLEAN", {"default": False, "tooltip": _FACE_TIP}),
+                "smooth": ("BOOLEAN", {"default": True, "tooltip": _SMOOTH_TIP}),
+                "detect_every": ("INT", {"default": 3, "min": 1, "max": 30, "tooltip": _DETECT_TIP}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("pose", "keypoints_json")
+    FUNCTION = "run"
+    CATEGORY = "ReShot"
+    DESCRIPTION = "Video frames → OpenPose-style skeleton frames (coloured stick figures on black, hands included, face not), tracked and smoothed over time. For MiniMax H3 Fun ControlNet pose, Wan VACE and any pose ControlNet."
+
+    def run(self, images, fit_to="none", hands=True, face=False, smooth=True, detect_every=3):
+        frames = _to_uint8_frames(images)
+        rgb, kp = pose_frames(frames, hands=hands, face=face, smooth=smooth, detect_every=detect_every)
+        if fit_to != "none":
+            rgb = _crop_batch(rgb, TARGETS[fit_to].multiple)
+        return (_rgb_to_image(rgb), kp)
+
+
+class ReShotPoseVideo:
+    """VIDEO → skeleton VIDEO with a generator preset applied."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "video": ("VIDEO", {"tooltip": "From Load Video (or any node that outputs VIDEO)."}),
+                "target": (["seedance", "h3", "wan", "none"], {"default": "h3", "tooltip": _TARGET_TIP}),
+            },
+            "optional": {
+                "hands": ("BOOLEAN", {"default": True, "tooltip": _HANDS_TIP}),
+                "face": ("BOOLEAN", {"default": False, "tooltip": _FACE_TIP}),
+                "smooth": ("BOOLEAN", {"default": True, "tooltip": _SMOOTH_TIP}),
+                "detect_every": ("INT", {"default": 3, "min": 1, "max": 30, "tooltip": _DETECT_TIP}),
+                "max_side": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 2, "tooltip": _MAX_SIDE_TIP}),
+            },
+        }
+
+    RETURN_TYPES = ("VIDEO", "IMAGE", "FLOAT", "STRING")
+    RETURN_NAMES = ("pose_video", "pose_frames", "fps", "keypoints_json")
+    FUNCTION = "run"
+    CATEGORY = "ReShot"
+    DESCRIPTION = "Reference video → OpenPose-style skeleton video that meets the Seedance / MiniMax H3 / Wan rules. Copy the moves, not the actors."
+
+    def run(self, video, target="h3", hands=True, face=False, smooth=True, detect_every=3, max_side=0):
+        frames, out_fps, preset = _video_in(video, target)
+        rgb, kp = pose_frames(frames, hands=hands, face=face, smooth=smooth, detect_every=detect_every)
+        rgb = _fit_out(rgb, preset, max_side)
+        images = _rgb_to_image(rgb)
+        return (_make_video(images, out_fps), images, out_fps, kp)
+
+
+class ReShotCannyMap:
+    """IMAGE batch → white-line edge IMAGE batch. No model; instant."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE", {"tooltip": "Video frames as an IMAGE batch [T, H, W, 3]."}),
+                "fit_to": (["none", "h3", "seedance", "wan"], {"default": "none", "tooltip": "Center-crop to the model's frame-size multiple."}),
+            },
+            "optional": {
+                "low": ("INT", {"default": 100, "min": 0, "max": 1000, "step": 10, "tooltip": _CANNY_LOW_TIP}),
+                "high": ("INT", {"default": 200, "min": 0, "max": 1000, "step": 10, "tooltip": _CANNY_HIGH_TIP}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("canny",)
+    FUNCTION = "run"
+    CATEGORY = "ReShot"
+    DESCRIPTION = "Video frames → canny line frames (white on black). Carries the outline of clothes and faces — depth or pose if you want those gone."
+
+    def run(self, images, fit_to="none", low=100, high=200):
+        gray = canny_frames(_to_uint8_frames(images), low=low, high=max(low, high))
+        if fit_to != "none":
+            gray = _crop_batch(gray, TARGETS[fit_to].multiple)
+        return (_gray_to_image(gray),)
+
+
+class ReShotCannyVideo:
+    """VIDEO → canny line VIDEO with a generator preset applied."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "video": ("VIDEO", {"tooltip": "From Load Video (or any node that outputs VIDEO)."}),
+                "target": (["seedance", "h3", "wan", "none"], {"default": "h3", "tooltip": _TARGET_TIP}),
+            },
+            "optional": {
+                "low": ("INT", {"default": 100, "min": 0, "max": 1000, "step": 10, "tooltip": _CANNY_LOW_TIP}),
+                "high": ("INT", {"default": 200, "min": 0, "max": 1000, "step": 10, "tooltip": _CANNY_HIGH_TIP}),
+                "max_side": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 2, "tooltip": _MAX_SIDE_TIP}),
+            },
+        }
+
+    RETURN_TYPES = ("VIDEO", "IMAGE", "FLOAT")
+    RETURN_NAMES = ("canny_video", "canny_frames", "fps")
+    FUNCTION = "run"
+    CATEGORY = "ReShot"
+    DESCRIPTION = "Reference video → canny line video that meets the Seedance / MiniMax H3 / Wan rules."
+
+    def run(self, video, target="h3", low=100, high=200, max_side=0):
+        frames, out_fps, preset = _video_in(video, target)
+        gray = _fit_out(canny_frames(frames, low=low, high=max(low, high)), preset, max_side)
         images = _gray_to_image(gray)
         return (_make_video(images, out_fps), images, out_fps)
 
@@ -233,8 +445,16 @@ def _make_video(images: torch.Tensor, fps: float):
 NODE_CLASS_MAPPINGS = {
     "ReShotDepthMap": ReShotDepthMap,
     "ReShotDepthVideo": ReShotDepthVideo,
+    "ReShotPoseMap": ReShotPoseMap,
+    "ReShotPoseVideo": ReShotPoseVideo,
+    "ReShotCannyMap": ReShotCannyMap,
+    "ReShotCannyVideo": ReShotCannyVideo,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ReShotDepthMap": "ReShot Depth Map",
     "ReShotDepthVideo": "ReShot Depth Video",
+    "ReShotPoseMap": "ReShot Pose Map",
+    "ReShotPoseVideo": "ReShot Pose Video",
+    "ReShotCannyMap": "ReShot Canny Map",
+    "ReShotCannyVideo": "ReShot Canny Video",
 }
