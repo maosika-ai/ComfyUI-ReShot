@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions, results, ideas
+    url: https://github.com/maosika-ai/reshot/discussions
+    about: One place for everything ReShot — the node, the CLI and the web page share it.
+  - name: The depth map itself looks wrong
+    url: https://github.com/maosika-ai/reshot/issues/new/choose
+    about: That is the reshot package, not the node — report it there with one reference frame and one depth frame.
