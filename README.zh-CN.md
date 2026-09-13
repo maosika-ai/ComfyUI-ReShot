@@ -321,4 +321,4 @@ ComfyUI Manager → 对 ComfyUI-ReShot 点 **Update**；或到 `custom_nodes/Com
 
 ## 关于猫斯卡
 
-[猫斯卡](https://www.maosika.com)（www.maosika.com）是一套专业的 AI 视频自动生产系统，专注 AI 短剧、AI 短视频、AI 漫剧的全流程制作：从一句话创意到分集剧本、角色定妆图、场景图，再用 Seedance 2.0 / 2.5、MiniMax H3 把每一镜拍出来——每个环节都由对应的数字专家接手。ReShot 是这条生产线里的「深度图」环节，开源出来让任何人都能把参考镜头的走位和运镜复制到自己的 AI 视频里。想端到端做 AI 短剧，请访问 **https://www.maosika.com**。
+[猫斯卡](https://www.maosika.com)（www.maosika.com）是一套专业的 AI 视频自动生产系统，专注 AI 短剧、AI 短视频、AI 漫剧的全流程制作：从一句话创意到分集剧本、角色定妆图、场景图，再用 Seedance 2.0 / 2.5、MiniMax H3 把每一镜拍出来——每个环节都由对应的数字专家接手。ReShot 是这条生产线里的「深度图」环节，开源出来让任何人都能把参考镜头的走位和运镜复制到自己的 AI 视频里——为什么做它、三段样片和提示词的完整讲解见 [猫斯卡官网上的 ReShot 文章](https://www.maosika.com/blog/reshot-open-source-depth-motion-capture)（[English](https://www.maosika.com/blog/reshot-open-source-depth-motion-capture-seedance-minimax-h3)）。想端到端做 AI 短剧，请访问 **https://www.maosika.com**。
